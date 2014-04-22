@@ -58,8 +58,8 @@ import org.eclipse.persistence.internal.jaxb.JAXBSchemaOutputResolver;
 import org.eclipse.persistence.internal.jaxb.JaxbClassLoader;
 import org.eclipse.persistence.internal.jaxb.ObjectGraphImpl;
 import org.eclipse.persistence.internal.jaxb.WrappedValue;
-import org.eclipse.persistence.internal.jaxb.json.schema.JsonSchemaGenerator;
-import org.eclipse.persistence.internal.jaxb.json.schema.model.JsonSchema;
+import org.eclipse.persistence.internal.jaxb.json.schema.JsonSchemaGeneratorImpl;
+import org.eclipse.persistence.jaxb.json.schema.model.JsonSchema;
 import org.eclipse.persistence.internal.jaxb.many.ManyValue;
 import org.eclipse.persistence.internal.oxm.Constants;
 import org.eclipse.persistence.internal.oxm.Root;
@@ -80,7 +80,10 @@ import org.eclipse.persistence.jaxb.javamodel.reflection.AnnotationHelper;
 import org.eclipse.persistence.jaxb.javamodel.reflection.JavaClassImpl;
 import org.eclipse.persistence.jaxb.javamodel.reflection.JavaModelImpl;
 import org.eclipse.persistence.jaxb.javamodel.reflection.JavaModelInputImpl;
+import org.eclipse.persistence.jaxb.json.JsonSchemaGeneratorFactory;
 import org.eclipse.persistence.jaxb.json.JsonSchemaOutputResolver;
+import org.eclipse.persistence.jaxb.json.schema.JsonSchemaGenerator;
+import org.eclipse.persistence.jaxb.json.schema.model.JsonSchemaProperty;
 import org.eclipse.persistence.jaxb.xmlmodel.JavaType;
 import org.eclipse.persistence.jaxb.xmlmodel.XmlBindings;
 import org.eclipse.persistence.jaxb.xmlmodel.XmlBindings.JavaTypes;
@@ -316,11 +319,10 @@ public class JAXBContext extends javax.xml.bind.JAXBContext {
             generateSchema(outputResolver, null);
         }
     }
-
+ 
     public void generateJsonSchema(SchemaOutputResolver outputResolver, Class rootClass) {
-        JsonSchemaGenerator generator = new JsonSchemaGenerator(
-           new JsonSchemaGenerator.DefaultJsonSchemaFactory(),
-           this, this.contextState.properties);
+        JsonSchemaGenerator<JsonSchema<JsonSchemaProperty>,JsonSchemaProperty> generator = 
+           JsonSchemaGeneratorFactory. newInstance(this, this.contextState.properties);     
         JsonSchema schema = generator.generateSchema(rootClass);
         try {
             Marshaller m = getJsonSchemaMarshaller();

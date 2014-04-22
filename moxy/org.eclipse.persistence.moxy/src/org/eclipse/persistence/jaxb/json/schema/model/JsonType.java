@@ -10,7 +10,7 @@
  * Contributors:
  *     Matt MacIvor - 2.5.1 - Initial Implementation
  ******************************************************************************/
-package org.eclipse.persistence.internal.jaxb.json.schema.model;
+package org.eclipse.persistence.jaxb.json.schema.model;
 
 import javax.xml.bind.annotation.XmlEnum;
 import javax.xml.bind.annotation.XmlEnumValue;

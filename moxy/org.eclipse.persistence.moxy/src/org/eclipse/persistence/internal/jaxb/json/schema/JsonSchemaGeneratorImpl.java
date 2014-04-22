@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1998, 2013 Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014 Oracle and/or its affiliates. All rights reserved.
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License v1.0 and Eclipse Distribution License v. 1.0
  * which accompanies this distribution.
@@ -19,12 +19,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
+ 
 import org.eclipse.persistence.descriptors.ClassDescriptor;
 import org.eclipse.persistence.internal.core.helper.CoreClassConstants;
-import org.eclipse.persistence.internal.jaxb.json.schema.model.JsonSchema;
-import org.eclipse.persistence.internal.jaxb.json.schema.model.JsonType;
-import org.eclipse.persistence.internal.jaxb.json.schema.model.JsonSchemaProperty;
+import org.eclipse.persistence.jaxb.json.schema.JsonSchemaGenerator;
+import org.eclipse.persistence.jaxb.json.schema.model.JsonSchema;
+import org.eclipse.persistence.jaxb.json.schema.model.JsonType;
+import org.eclipse.persistence.jaxb.json.schema.model.JsonSchemaProperty;
 import org.eclipse.persistence.internal.oxm.Constants;
 import org.eclipse.persistence.internal.oxm.QNameInheritancePolicy;
 import org.eclipse.persistence.internal.oxm.XMLBinaryDataHelper;
@@ -46,6 +47,8 @@ import org.eclipse.persistence.jaxb.JAXBContext;
 import org.eclipse.persistence.jaxb.JAXBContextProperties;
 import org.eclipse.persistence.jaxb.JAXBEnumTypeConverter;
 import org.eclipse.persistence.jaxb.MarshallerProperties;
+import org.eclipse.persistence.jaxb.json.schema.JsonSchemaCallback;
+import org.eclipse.persistence.jaxb.json.schema.JsonSchemaCallback;
 import org.eclipse.persistence.mappings.DatabaseMapping;
 import org.eclipse.persistence.oxm.NamespacePrefixMapper;
 import org.eclipse.persistence.oxm.NamespaceResolver;
@@ -68,35 +71,8 @@ import org.eclipse.persistence.sessions.Project;
  * @param <Schema> The specific subtype of JSON Schema required
  * @param <Property> The specific subtype of the JSON Schema property object
  */
-public class JsonSchemaGenerator <Schema extends JsonSchema<Property>, Property extends JsonSchemaProperty> {
-    
-    /**
-     * A interface to ask the generator to create specific subclasses of
-     * the standard schema objects, for example JsonSchema with hypermedia
-     * extensions would be an example of a suitable extension.
-     * @param <Schema> The type of the Schema object
-     * @param <Property> The type of the Property object
-     */
-    public interface JsonSchemaFactory<Schema extends JsonSchema<Property>, Property extends JsonSchemaProperty>
-    {
-        public Schema createSchema(Class rootClass);
-        public Property createProperty();
-    }
+public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Property extends JsonSchemaProperty> implements JsonSchemaGenerator {
 
-    /**
-     * A default implements of a factory that produces vanilla v3 JSON Schema
-     * models
-     */
-    public static class DefaultJsonSchemaFactory implements JsonSchemaFactory<JsonSchema<JsonSchemaProperty>, JsonSchemaProperty>
-    {
-        public JsonSchema createSchema(Class rootClass) {
-            return new JsonSchema();
-        }
-
-        public JsonSchemaProperty createProperty() {
-            return new JsonSchemaProperty();
-        }
-    }
     
     
     Project project;
@@ -112,15 +88,15 @@ public class JsonSchemaGenerator <Schema extends JsonSchema<Property>, Property 
     XMLContext xmlContext;
     Property rootProperty = null;
     private JAXBContext jaxbContext;
-    private JsonSchemaFactory<Schema, Property> factory;
+    private JsonSchemaCallback<Schema, Property> factory;
 
     private static String DEFINITION_PATH="#/definitions";
     
     private static HashMap<Class, JsonType> javaTypeToJsonType;
     
     
-    public JsonSchemaGenerator(
-            JsonSchemaFactory<Schema, Property> factory,
+    public JsonSchemaGeneratorImpl(
+            JsonSchemaCallback<Schema, Property> factory,
             JAXBContext jaxbContext, Map properties) {
         //this.project = project;
         this.factory = factory;
@@ -147,6 +123,7 @@ public class JsonSchemaGenerator <Schema extends JsonSchema<Property>, Property 
         }
     }
     
+    @Override
     public JsonSchema generateSchema(Class rootClass) {
         this.rootClass = rootClass;
         schema = factory.createSchema(rootClass);

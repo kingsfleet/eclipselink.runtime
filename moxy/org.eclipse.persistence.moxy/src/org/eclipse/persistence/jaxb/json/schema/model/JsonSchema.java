@@ -10,7 +10,7 @@
  * Contributors:
  *     Matt MacIvor - 2.5.1 - Initial Implementation
  ******************************************************************************/
-package org.eclipse.persistence.internal.jaxb.json.schema.model;
+package org.eclipse.persistence.jaxb.json.schema.model;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,7 +19,7 @@ import java.util.Map;
 import javax.xml.bind.annotation.XmlElement;
 import javax.xml.bind.annotation.XmlElementWrapper;
 
-import org.eclipse.persistence.internal.jaxb.json.schema.JsonSchemaGenerator;
+import org.eclipse.persistence.internal.jaxb.json.schema.JsonSchemaGeneratorImpl;
 import org.eclipse.persistence.oxm.annotations.XmlVariableNode;
 
 /**
@@ -29,7 +29,7 @@ import org.eclipse.persistence.oxm.annotations.XmlVariableNode;
  * by the JsonSchemaGenerator based on an EclipseLink project and marshalled out using EclipseLink
  * to create a JsonSchema.
  * 
- * @see JsonSchemaGenerator
+ * @see JsonSchemaGeneratorImpl
  * @author mmacivor
  *
  */
