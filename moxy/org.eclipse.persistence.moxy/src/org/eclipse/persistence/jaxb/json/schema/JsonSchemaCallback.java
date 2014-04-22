@@ -13,8 +13,13 @@
 
 package org.eclipse.persistence.jaxb.json.schema;
 
+import java.util.Map;
 import org.eclipse.persistence.jaxb.json.schema.model.JsonSchema;
 import org.eclipse.persistence.jaxb.json.schema.model.JsonSchemaProperty;
+
+import org.eclipse.persistence.internal.oxm.mappings.Mapping;
+import org.eclipse.persistence.oxm.XMLDescriptor;
+
 
 /**
  * A interface to ask the generator to create specific subclasses of
@@ -39,12 +44,17 @@ public interface JsonSchemaCallback<Schema extends JsonSchema<Property>, Propert
         public JsonSchemaProperty createProperty() {
             return new JsonSchemaProperty();
         }
+
+        public void updateProperty(JsonSchemaProperty property, Mapping next, XMLDescriptor descriptor, Map<String, JsonSchemaProperty> properties) {
+        }
     };
     
     
-    
+     
     public Schema createSchema(Class rootClass);
 
     public Property createProperty();
+     
+    public void updateProperty(Property property, Mapping next, XMLDescriptor descriptor, Map<String, Property> properties);
     
 }

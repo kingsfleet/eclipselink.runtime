@@ -88,7 +88,7 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
     XMLContext xmlContext;
     Property rootProperty = null;
     private JAXBContext jaxbContext;
-    private JsonSchemaCallback<Schema, Property> factory;
+    private JsonSchemaCallback<Schema, Property> callback;
 
     private static String DEFINITION_PATH="#/definitions";
     
@@ -99,7 +99,7 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
             JsonSchemaCallback<Schema, Property> factory,
             JAXBContext jaxbContext, Map properties) {
         //this.project = project;
-        this.factory = factory;
+        this.callback = factory;
         this.xmlContext = jaxbContext.getXMLContext();
         this.jaxbContext = jaxbContext;
         this.contextProperties = properties;
@@ -126,7 +126,7 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
     @Override
     public JsonSchema generateSchema(Class rootClass) {
         this.rootClass = rootClass;
-        schema = factory.createSchema(rootClass);
+        schema = callback.createSchema(rootClass);
         schema.setTitle(rootClass.getName());
         
         if(rootClass.isEnum()) {
@@ -154,7 +154,7 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
         //Check for root level list or array
         if(rootClass.isArray() || isCollection(rootClass)) {
             schema.setType(JsonType.ARRAY);
-            schema.setItems(factory.createProperty());
+            schema.setItems(callback.createProperty());
             Class itemType = Object.class; 
             
             if(rootClass.isArray()) {
@@ -191,7 +191,7 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
         if(Boolean.TRUE.equals(includeRoot)) {
             XMLField field = descriptor.getDefaultRootElementField();
             if(field != null) {
-                rootProperty = factory.createProperty();
+                rootProperty = callback.createProperty();
                 rootProperty.setType(JsonType.OBJECT);
                 rootProperty.setName(getNameForFragment(field.getXPathFragment()));
                 properties.put(rootProperty.getName(), rootProperty);
@@ -445,161 +445,252 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
 
     private Property generateProperty(Mapping next, XMLDescriptor descriptor, Map<String, Property> properties) {
         Property prop = null;
-        if(((Mapping)next).isCollectionMapping()) {
-            if(next instanceof CollectionReferenceMapping) {
-                CollectionReferenceMapping mapping = (CollectionReferenceMapping)next;
-                Set<XMLField> sourceFields = mapping.getSourceToTargetKeyFieldAssociations().keySet();
-                XMLDescriptor reference = (XMLDescriptor) mapping.getReferenceDescriptor();
-                for(XMLField nextField: sourceFields) {
-                    XPathFragment frag = nextField.getXPathFragment();
-                    String propertyName = getNameForFragment(frag);
+        try {
+            if(((Mapping)next).isCollectionMapping()) {
+                if(next instanceof CollectionReferenceMapping) {
+                    CollectionReferenceMapping mapping = (CollectionReferenceMapping)next;
+                    Set<XMLField> sourceFields = mapping.getSourceToTargetKeyFieldAssociations().keySet();
+                    XMLDescriptor reference = (XMLDescriptor) mapping.getReferenceDescriptor();
+                    for(XMLField nextField: sourceFields) {
+                        XPathFragment frag = nextField.getXPathFragment();
+                        String propertyName = getNameForFragment(frag);
 
-                    XMLField targetField = (XMLField) mapping.getSourceToTargetKeyFieldAssociations().get(nextField);
-                    Class type = CoreClassConstants.STRING;
-                    if(reference != null) {
-                        type = getTypeForTargetField(targetField, reference);
+                        XMLField targetField = (XMLField) mapping.getSourceToTargetKeyFieldAssociations().get(nextField);
+                        Class type = CoreClassConstants.STRING;
+                        if(reference != null) {
+                            type = getTypeForTargetField(targetField, reference);
+                        }
+
+                        prop = properties.get(propertyName);
+                        if(prop == null) {
+                            prop = callback.createProperty();
+                            prop.setName(propertyName);
+                        }
+                        JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
+                        nestedProperty.setType(JsonType.ARRAY);
+                        nestedProperty.setItem(callback.createProperty());
+                        nestedProperty.getItem().setType(getJsonTypeForJavaType(type));
+                        if(!properties.containsKey(prop.getName())) {
+                            properties.put(prop.getName(), prop);                    
+                        }
                     }
-                    
+                    return prop;                
+                } else if(next.isAbstractCompositeCollectionMapping()) {
+                    CompositeCollectionMapping mapping = (CompositeCollectionMapping)next;
+                    XMLField field = (XMLField)mapping.getField();
+                    XPathFragment frag = field.getXPathFragment();
+                    String propName = getNameForFragment(frag);
+                    //for paths, there may already be an existing property
+                    prop = properties.get(propName);
+                    if(prop == null) {
+                        prop = callback.createProperty();
+                        prop.setName(propName);
+                    }
+                    JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
+                    nestedProperty.setType(JsonType.ARRAY);
+                    nestedProperty.setItem(callback.createProperty());
+                    XMLDescriptor referenceDescriptor = (XMLDescriptor)mapping.getReferenceDescriptor(); 
+                    if(referenceDescriptor != null && referenceDescriptor.hasInheritance()) {
+                        //handle inheritence
+                        //schema.setAnyOf(new Property[descriptor.getInheritancePolicy().getAllChildDescriptors().size()]);
+                        JsonSchemaProperty[] props = processDescriptorsIntoProps(referenceDescriptor);
+                        nestedProperty.getItem().setAnyOf(props);
+                    } else {
+                        nestedProperty.getItem().setRef(getReferenceForDescriptor(referenceDescriptor, false));
+                        //populateProperties(nestedProperty.getItem().getProperties(), (XMLDescriptor)mapping.getReferenceDescriptor());
+                    }
+                } else if(next.isAbstractCompositeDirectCollectionMapping()) {
+                    DirectCollectionMapping mapping = (DirectCollectionMapping)next;
+                    XMLField field = (XMLField)mapping.getField();
+                    XPathFragment frag = field.getXPathFragment();
+                    List<String> enumeration = null;
+                    if(mapping.getValueConverter() instanceof JAXBEnumTypeConverter) {
+                        enumeration = getEnumeration((DatabaseMapping)next);
+                    }
+                    String propertyName = getNameForFragment(frag);
+                    if(frag.nameIsText()) {
+                        propertyName = (String)this.contextProperties.get(MarshallerProperties.JSON_VALUE_WRAPPER);
+                    }
+
+                    if(frag.isAttribute() && this.attributePrefix != null) {
+                        propertyName = attributePrefix + propertyName;
+                    }
                     prop = properties.get(propertyName);
                     if(prop == null) {
-                        prop = factory.createProperty();
+                        prop = callback.createProperty();
                         prop.setName(propertyName);
                     }
                     JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
                     nestedProperty.setType(JsonType.ARRAY);
-                    nestedProperty.setItem(factory.createProperty());
+                    nestedProperty.setItem(callback.createProperty());
+                    if(enumeration != null) {
+                        nestedProperty.getItem().setEnumeration(enumeration);
+                    } 
+                    Class type = mapping.getAttributeElementClass();
+                    if(type == null) {
+                        type = CoreClassConstants.STRING;
+                    }
                     nestedProperty.getItem().setType(getJsonTypeForJavaType(type));
-                    if(!properties.containsKey(prop.getName())) {
-                        properties.put(prop.getName(), prop);                    
-                    }
-                }
-                return prop;                
-            } else if(next.isAbstractCompositeCollectionMapping()) {
-                CompositeCollectionMapping mapping = (CompositeCollectionMapping)next;
-                XMLField field = (XMLField)mapping.getField();
-                XPathFragment frag = field.getXPathFragment();
-                String propName = getNameForFragment(frag);
-                //for paths, there may already be an existing property
-                prop = properties.get(propName);
-                if(prop == null) {
-                    prop = factory.createProperty();
-                    prop.setName(propName);
-                }
-                JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
-                nestedProperty.setType(JsonType.ARRAY);
-                nestedProperty.setItem(factory.createProperty());
-                XMLDescriptor referenceDescriptor = (XMLDescriptor)mapping.getReferenceDescriptor(); 
-                if(referenceDescriptor != null && referenceDescriptor.hasInheritance()) {
-                    //handle inheritence
-                    //schema.setAnyOf(new Property[descriptor.getInheritancePolicy().getAllChildDescriptors().size()]);
-                    JsonSchemaProperty[] props = processDescriptorsIntoProps(referenceDescriptor);
-                    nestedProperty.getItem().setAnyOf(props);
-                } else {
-                    nestedProperty.getItem().setRef(getReferenceForDescriptor(referenceDescriptor, false));
-                    //populateProperties(nestedProperty.getItem().getProperties(), (XMLDescriptor)mapping.getReferenceDescriptor());
-                }
-            } else if(next.isAbstractCompositeDirectCollectionMapping()) {
-                DirectCollectionMapping mapping = (DirectCollectionMapping)next;
-                XMLField field = (XMLField)mapping.getField();
-                XPathFragment frag = field.getXPathFragment();
-                List<String> enumeration = null;
-                if(mapping.getValueConverter() instanceof JAXBEnumTypeConverter) {
-                    enumeration = getEnumeration((DatabaseMapping)next);
-                }
-                String propertyName = getNameForFragment(frag);
-                if(frag.nameIsText()) {
-                    propertyName = (String)this.contextProperties.get(MarshallerProperties.JSON_VALUE_WRAPPER);
-                }
+                    return prop;
+                } else if(next instanceof BinaryDataCollectionMapping) {
+                    BinaryDataCollectionMapping mapping = (BinaryDataCollectionMapping)next;
+                    XMLField field = (XMLField)mapping.getField();
+                    XPathFragment frag = field.getXPathFragment();
 
-                if(frag.isAttribute() && this.attributePrefix != null) {
-                    propertyName = attributePrefix + propertyName;
-                }
-                prop = properties.get(propertyName);
-                if(prop == null) {
-                    prop = factory.createProperty();
-                    prop.setName(propertyName);
-                }
-                JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
-                nestedProperty.setType(JsonType.ARRAY);
-                nestedProperty.setItem(factory.createProperty());
-                if(enumeration != null) {
-                    nestedProperty.getItem().setEnumeration(enumeration);
-                } 
-                Class type = mapping.getAttributeElementClass();
-                if(type == null) {
-                    type = CoreClassConstants.STRING;
-                }
-                nestedProperty.getItem().setType(getJsonTypeForJavaType(type));
-                return prop;
-            } else if(next instanceof BinaryDataCollectionMapping) {
-                BinaryDataCollectionMapping mapping = (BinaryDataCollectionMapping)next;
-                XMLField field = (XMLField)mapping.getField();
-                XPathFragment frag = field.getXPathFragment();
-
-                String propertyName = getNameForFragment(frag);
-                if(frag.isSelfFragment()) {
-                    propertyName = Constants.VALUE_WRAPPER;
-                    if(this.contextProperties != null)  {
-                        String valueWrapper = (String) this.contextProperties.get(JAXBContextProperties.JSON_VALUE_WRAPPER);
-                        if(valueWrapper != null) {
-                            propertyName = valueWrapper;
+                    String propertyName = getNameForFragment(frag);
+                    if(frag.isSelfFragment()) {
+                        propertyName = Constants.VALUE_WRAPPER;
+                        if(this.contextProperties != null)  {
+                            String valueWrapper = (String) this.contextProperties.get(JAXBContextProperties.JSON_VALUE_WRAPPER);
+                            if(valueWrapper != null) {
+                                propertyName = valueWrapper;
+                            }
                         }
                     }
-                }
 
-                if(frag.isAttribute() && this.attributePrefix != null) {
-                    propertyName = attributePrefix + propertyName;
-                }
-                prop = properties.get(propertyName);
-                if(prop == null) {
-                    prop = factory.createProperty();
-                    prop.setName(propertyName);
-                }
-                JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
-                nestedProperty.setType(JsonType.ARRAY);
-                nestedProperty.setItem(factory.createProperty());
+                    if(frag.isAttribute() && this.attributePrefix != null) {
+                        propertyName = attributePrefix + propertyName;
+                    }
+                    prop = properties.get(propertyName);
+                    if(prop == null) {
+                        prop = callback.createProperty();
+                        prop.setName(propertyName);
+                    }
+                    JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
+                    nestedProperty.setType(JsonType.ARRAY);
+                    nestedProperty.setItem(callback.createProperty());
 
-                if(mapping.shouldInlineBinaryData()) {
-                    nestedProperty.getItem().setType(JsonType.STRING);
-                } else {
-                    nestedProperty.getItem().setAnyOf(getXopIncludeProperties());
+                    if(mapping.shouldInlineBinaryData()) {
+                        nestedProperty.getItem().setType(JsonType.STRING);
+                    } else {
+                        nestedProperty.getItem().setAnyOf(getXopIncludeProperties());
+                    }
+                    return prop;          
                 }
-                return prop;          
-            }
-        } else {
-            if(next.isAbstractDirectMapping()) {
-                //handle direct mapping
-                DirectMapping directMapping = (DirectMapping)next;
-                XMLField field = (XMLField)directMapping.getField();
-                XPathFragment frag = field.getXPathFragment();
-                List<String> enumeration = null;
-                if(directMapping.getConverter() instanceof JAXBEnumTypeConverter) {
-                    enumeration = getEnumeration((DatabaseMapping)directMapping);
-                }                
-                String propertyName = getNameForFragment(frag);
-                if(frag.nameIsText()) {
-                    propertyName = Constants.VALUE_WRAPPER;
-                    if(this.contextProperties != null)  {
-                        String valueWrapper = (String) this.contextProperties.get(JAXBContextProperties.JSON_VALUE_WRAPPER);
-                        if(valueWrapper != null) {
-                            propertyName = valueWrapper;
+            } else {
+                if(next.isAbstractDirectMapping()) {
+                    //handle direct mapping
+                    DirectMapping directMapping = (DirectMapping)next;
+                    XMLField field = (XMLField)directMapping.getField();
+                    XPathFragment frag = field.getXPathFragment();
+                    List<String> enumeration = null;
+                    if(directMapping.getConverter() instanceof JAXBEnumTypeConverter) {
+                        enumeration = getEnumeration((DatabaseMapping)directMapping);
+                    }                
+                    String propertyName = getNameForFragment(frag);
+                    if(frag.nameIsText()) {
+                        propertyName = Constants.VALUE_WRAPPER;
+                        if(this.contextProperties != null)  {
+                            String valueWrapper = (String) this.contextProperties.get(JAXBContextProperties.JSON_VALUE_WRAPPER);
+                            if(valueWrapper != null) {
+                                propertyName = valueWrapper;
+                            }
+                        }
+                    }                
+                    if(frag.isAttribute() && this.attributePrefix != null) {
+                        propertyName = attributePrefix + propertyName;
+                    }
+                    prop = properties.get(propertyName);
+                    if(prop == null) {
+                        prop = callback.createProperty();
+                        prop.setName(propertyName);
+                    }
+                    JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
+                    if(enumeration != null) {
+                        nestedProperty.setEnumeration(enumeration);
+                    } 
+                    if(directMapping instanceof BinaryDataMapping) {
+                        BinaryDataMapping binaryMapping = (BinaryDataMapping)directMapping;
+                        if(binaryMapping.shouldInlineBinaryData() || binaryMapping.isSwaRef()) {
+                            nestedProperty.setType(JsonType.STRING);
+                        } else {
+                            if(this.xopIncludeProp == null) {
+                                initXopIncludeProp();
+                            }
+                            nestedProperty.setAnyOf(this.xopIncludeProp);
+                        }
+                    } else {
+                        nestedProperty.setType(getJsonTypeForJavaType(directMapping.getAttributeClassification()));
+                    }
+                    return prop;
+                } else if(next instanceof ObjectReferenceMapping) {
+                    ObjectReferenceMapping mapping = (ObjectReferenceMapping)next;
+                    Set<XMLField> sourceFields = mapping.getSourceToTargetKeyFieldAssociations().keySet();
+                    XMLDescriptor reference = (XMLDescriptor) mapping.getReferenceDescriptor();
+                    for(XMLField nextField: sourceFields) {
+                        XPathFragment frag = nextField.getXPathFragment();
+                        String propName = getNameForFragment(frag);
+                        XMLField targetField = (XMLField) mapping.getSourceToTargetKeyFieldAssociations().get(nextField);
+                        Class type = CoreClassConstants.STRING;
+                        if(reference != null) {
+                            type = getTypeForTargetField(targetField, reference);
+                        }
+
+                        prop = properties.get(propName);
+                        if(prop == null) {
+                            prop = callback.createProperty();
+                            prop.setName(propName);
+                        }
+                        JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
+                        //nestedProperty.setType(JsonType.ARRAY);
+                        //nestedProperty.setItem(new Property());
+                        nestedProperty.setType(getJsonTypeForJavaType(type));
+                        if(!properties.containsKey(prop.getName())) {
+                            properties.put(prop.getName(), prop);                    
                         }
                     }
-                }                
-                if(frag.isAttribute() && this.attributePrefix != null) {
-                    propertyName = attributePrefix + propertyName;
-                }
-                prop = properties.get(propertyName);
-                if(prop == null) {
-                    prop = factory.createProperty();
-                    prop.setName(propertyName);
-                }
-                JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
-                if(enumeration != null) {
-                    nestedProperty.setEnumeration(enumeration);
-                } 
-                if(directMapping instanceof BinaryDataMapping) {
-                    BinaryDataMapping binaryMapping = (BinaryDataMapping)directMapping;
+                    return prop;                
+                } else if(next.isAbstractCompositeObjectMapping()) {
+                    CompositeObjectMapping mapping = (CompositeObjectMapping)next;
+                    XMLDescriptor nextDescriptor = (XMLDescriptor)mapping.getReferenceDescriptor();
+                    XMLField field = (XMLField)mapping.getField();
+                    XPathFragment firstFragment = field.getXPathFragment();
+                    if(firstFragment.isSelfFragment() || firstFragment.nameIsText()) {
+                        if(nextDescriptor != null) {
+                            populateProperties(properties, nextDescriptor);
+                        }
+                    } else {
+                        String propName = getNameForFragment(firstFragment);
+                        prop = properties.get(propName);
+                        if(prop == null) {
+                            prop = callback.createProperty();
+                            prop.setName(propName);
+                        }
+                        //prop.setType(JsonType.OBJECT);
+                        prop.setName(propName);
+                        JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(firstFragment, prop);
+                        XMLDescriptor referenceDescriptor = (XMLDescriptor)mapping.getReferenceDescriptor(); 
+                        if(referenceDescriptor != null && referenceDescriptor.hasInheritance()) {
+                            JsonSchemaProperty[] props = processDescriptorsIntoProps(referenceDescriptor);
+                            nestedProperty.setAnyOf(props);
+                        } else {
+                            nestedProperty.setRef(getReferenceForDescriptor(referenceDescriptor, false));
+                            //populateProperties(nestedProperty.getItem().getProperties(), (XMLDescriptor)mapping.getReferenceDescriptor());
+                        }                    //populateProperties(nestedProperty.getProperties(), nextDescriptor);
+                    }
+                } else if(next instanceof BinaryDataMapping) {
+                    BinaryDataMapping binaryMapping = (BinaryDataMapping)next;
+                    XMLField field = (XMLField)binaryMapping.getField();
+                    XPathFragment frag = field.getXPathFragment();
+                    String propertyName = getNameForFragment(frag);
+                    if(frag.isSelfFragment()) {
+                        propertyName = Constants.VALUE_WRAPPER;
+                        if(this.contextProperties != null)  {
+                            String valueWrapper = (String) this.contextProperties.get(MarshallerProperties.JSON_VALUE_WRAPPER);
+                            if(valueWrapper != null) {
+                                propertyName = valueWrapper;
+                            }
+                        }
+                    }                
+                    if(frag.isAttribute() && this.attributePrefix != null) {
+                        propertyName = attributePrefix + propertyName;
+                    }
+                    prop = properties.get(propertyName);
+                    if(prop == null) {
+                        prop = callback.createProperty();
+                        prop.setName(propertyName);
+                    }
+                    JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
                     if(binaryMapping.shouldInlineBinaryData() || binaryMapping.isSwaRef()) {
                         nestedProperty.setType(JsonType.STRING);
                     } else {
@@ -608,101 +699,18 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
                         }
                         nestedProperty.setAnyOf(this.xopIncludeProp);
                     }
-                } else {
-                    nestedProperty.setType(getJsonTypeForJavaType(directMapping.getAttributeClassification()));
+                    return prop;                
                 }
-                return prop;
-            } else if(next instanceof ObjectReferenceMapping) {
-                ObjectReferenceMapping mapping = (ObjectReferenceMapping)next;
-                Set<XMLField> sourceFields = mapping.getSourceToTargetKeyFieldAssociations().keySet();
-                XMLDescriptor reference = (XMLDescriptor) mapping.getReferenceDescriptor();
-                for(XMLField nextField: sourceFields) {
-                    XPathFragment frag = nextField.getXPathFragment();
-                    String propName = getNameForFragment(frag);
-                    XMLField targetField = (XMLField) mapping.getSourceToTargetKeyFieldAssociations().get(nextField);
-                    Class type = CoreClassConstants.STRING;
-                    if(reference != null) {
-                        type = getTypeForTargetField(targetField, reference);
-                    }
-                    
-                    prop = properties.get(propName);
-                    if(prop == null) {
-                        prop = factory.createProperty();
-                        prop.setName(propName);
-                    }
-                    JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
-                    //nestedProperty.setType(JsonType.ARRAY);
-                    //nestedProperty.setItem(new Property());
-                    nestedProperty.setType(getJsonTypeForJavaType(type));
-                    if(!properties.containsKey(prop.getName())) {
-                        properties.put(prop.getName(), prop);                    
-                    }
-                }
-                return prop;                
-            } else if(next.isAbstractCompositeObjectMapping()) {
-                CompositeObjectMapping mapping = (CompositeObjectMapping)next;
-                XMLDescriptor nextDescriptor = (XMLDescriptor)mapping.getReferenceDescriptor();
-                XMLField field = (XMLField)mapping.getField();
-                XPathFragment firstFragment = field.getXPathFragment();
-                if(firstFragment.isSelfFragment() || firstFragment.nameIsText()) {
-                    if(nextDescriptor != null) {
-                        populateProperties(properties, nextDescriptor);
-                    }
-                } else {
-                    String propName = getNameForFragment(firstFragment);
-                    prop = properties.get(propName);
-                    if(prop == null) {
-                        prop = factory.createProperty();
-                        prop.setName(propName);
-                    }
-                    //prop.setType(JsonType.OBJECT);
-                    prop.setName(propName);
-                    JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(firstFragment, prop);
-                    XMLDescriptor referenceDescriptor = (XMLDescriptor)mapping.getReferenceDescriptor(); 
-                    if(referenceDescriptor != null && referenceDescriptor.hasInheritance()) {
-                        JsonSchemaProperty[] props = processDescriptorsIntoProps(referenceDescriptor);
-                        nestedProperty.setAnyOf(props);
-                    } else {
-                        nestedProperty.setRef(getReferenceForDescriptor(referenceDescriptor, false));
-                        //populateProperties(nestedProperty.getItem().getProperties(), (XMLDescriptor)mapping.getReferenceDescriptor());
-                    }                    //populateProperties(nestedProperty.getProperties(), nextDescriptor);
-                }
-            } else if(next instanceof BinaryDataMapping) {
-                BinaryDataMapping binaryMapping = (BinaryDataMapping)next;
-                XMLField field = (XMLField)binaryMapping.getField();
-                XPathFragment frag = field.getXPathFragment();
-                String propertyName = getNameForFragment(frag);
-                if(frag.isSelfFragment()) {
-                    propertyName = Constants.VALUE_WRAPPER;
-                    if(this.contextProperties != null)  {
-                        String valueWrapper = (String) this.contextProperties.get(MarshallerProperties.JSON_VALUE_WRAPPER);
-                        if(valueWrapper != null) {
-                            propertyName = valueWrapper;
-                        }
-                    }
-                }                
-                if(frag.isAttribute() && this.attributePrefix != null) {
-                    propertyName = attributePrefix + propertyName;
-                }
-                prop = properties.get(propertyName);
-                if(prop == null) {
-                    prop = factory.createProperty();
-                    prop.setName(propertyName);
-                }
-                JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
-                if(binaryMapping.shouldInlineBinaryData() || binaryMapping.isSwaRef()) {
-                    nestedProperty.setType(JsonType.STRING);
-                } else {
-                    if(this.xopIncludeProp == null) {
-                        initXopIncludeProp();
-                    }
-                    nestedProperty.setAnyOf(this.xopIncludeProp);
-                }
-                return prop;                
+            }
+
+            return prop;
+            
+        }
+        finally {
+            if (prop!=null) {
+                callback.updateProperty(prop, next, descriptor, properties); 
             }
         }
-        
-        return prop;
     }
 
     private JsonSchemaProperty[] processDescriptorsIntoProps(XMLDescriptor referenceDescriptor) {
@@ -712,7 +720,7 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
         JsonSchemaProperty[] props = new JsonSchemaProperty[descriptors.size()];
         for(int i = 0; i < props.length; i++) {
             XMLDescriptor nextDesc = (XMLDescriptor)descriptors.get(i);
-            JsonSchemaProperty ref = factory.createProperty();
+            JsonSchemaProperty ref = callback.createProperty();
             ref.setRef(getReferenceForDescriptor(nextDesc, true));
             props[i] = ref;
         }
@@ -736,19 +744,19 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
 
     private void initXopIncludeProp() {
         this.xopIncludeProp = new JsonSchemaProperty[2];
-        JsonSchemaProperty p = factory.createProperty();
+        JsonSchemaProperty p = callback.createProperty();
         p.setType(JsonType.STRING);
         this.xopIncludeProp[0] = p;
         
-        p = factory.createProperty();
+        p = callback.createProperty();
         this.xopIncludeProp[1] = p;
         p.setType(JsonType.OBJECT);
-        JsonSchemaProperty includeProperty = factory.createProperty();
+        JsonSchemaProperty includeProperty = callback.createProperty();
         includeProperty.setName("Include");
         includeProperty.setType(JsonType.OBJECT);
         p.getProperties().put(includeProperty.getName(), includeProperty);
         
-        JsonSchemaProperty hrefProp = factory.createProperty();
+        JsonSchemaProperty hrefProp = callback.createProperty();
         String propName = "href";
         if(this.attributePrefix != null) {
             propName = this.attributePrefix + propName;
@@ -777,13 +785,13 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
             return ref;
         }
         if(!this.schema.getDefinitions().containsKey(className)) {
-            Property definition = factory.createProperty();
+            Property definition = callback.createProperty();
             definition.setName(className);
             this.schema.getDefinitions().put(definition.getName(), definition);
             definition.setType(JsonType.OBJECT);
             if(referenceDescriptor.hasInheritance() && referenceDescriptor.getInheritancePolicy().hasClassIndicator()) {
                 XMLField f = (XMLField)referenceDescriptor.getInheritancePolicy().getClassIndicatorField();
-                JsonSchemaProperty indicatorProp = factory.createProperty();
+                JsonSchemaProperty indicatorProp = callback.createProperty();
                 indicatorProp.setName(getNameForFragment(f.getXPathFragment()));
                 indicatorProp.setType(JsonType.STRING); 
                 definition.getProperties().put(indicatorProp.getName(), indicatorProp);
@@ -896,7 +904,7 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
         while(frag != null && !frag.nameIsText()) { 
             Property nestedProperty = (Property) prop.getProperty(propertyName); 
             if(nestedProperty == null) {
-                nestedProperty = factory.createProperty();
+                nestedProperty = callback.createProperty();
                 nestedProperty.setName(propertyName);
             }
             currentProperties.put(nestedProperty.getName(), nestedProperty);
