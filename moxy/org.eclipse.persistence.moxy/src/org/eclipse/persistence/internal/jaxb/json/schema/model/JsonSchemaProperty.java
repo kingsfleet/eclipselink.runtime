@@ -27,7 +27,7 @@ import org.eclipse.persistence.oxm.annotations.XmlVariableNode;
 
 
 @XmlAccessorType(XmlAccessType.FIELD)
-public class Property {
+public class JsonSchemaProperty <Property extends JsonSchemaProperty> {
 
     @XmlTransient
     private String name;
@@ -52,7 +52,7 @@ public class Property {
     private String ref;
     
     @XmlElement(name="anyOf")
-    private Property[] anyOf;
+    private JsonSchemaProperty[] anyOf;
     
     public void setType(JsonType type) {
         this.type = type;
@@ -73,7 +73,7 @@ public class Property {
         
     }
 
-    public Map<String, Property> getProperties() {
+    public Map<String, ? extends Property> getProperties() {
         if(this.properties == null) {
             this.properties = new LinkedHashMap<String, Property>();
         }
@@ -117,12 +117,12 @@ public class Property {
     }
 
 
-    public void setAnyOf(Property[] anyOf) {
+    public void setAnyOf(JsonSchemaProperty[] anyOf) {
        this.anyOf = anyOf;
     }
 
 
-    public Property[] getAnyOf() {
+    public JsonSchemaProperty[] getAnyOf() {
         return anyOf;
     }
     

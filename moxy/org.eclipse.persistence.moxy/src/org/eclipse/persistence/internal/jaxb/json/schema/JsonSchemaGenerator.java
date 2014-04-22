@@ -24,7 +24,7 @@ import org.eclipse.persistence.descriptors.ClassDescriptor;
 import org.eclipse.persistence.internal.core.helper.CoreClassConstants;
 import org.eclipse.persistence.internal.jaxb.json.schema.model.JsonSchema;
 import org.eclipse.persistence.internal.jaxb.json.schema.model.JsonType;
-import org.eclipse.persistence.internal.jaxb.json.schema.model.Property;
+import org.eclipse.persistence.internal.jaxb.json.schema.model.JsonSchemaProperty;
 import org.eclipse.persistence.internal.oxm.Constants;
 import org.eclipse.persistence.internal.oxm.QNameInheritancePolicy;
 import org.eclipse.persistence.internal.oxm.XMLBinaryDataHelper;
@@ -49,7 +49,7 @@ import org.eclipse.persistence.jaxb.MarshallerProperties;
 import org.eclipse.persistence.mappings.DatabaseMapping;
 import org.eclipse.persistence.oxm.NamespacePrefixMapper;
 import org.eclipse.persistence.oxm.NamespaceResolver;
-import org.eclipse.persistence.oxm.XMLContext;
+import org.eclipse.persistence.oxm.XMLContext; 
 import org.eclipse.persistence.oxm.XMLDescriptor;
 import org.eclipse.persistence.oxm.XMLField;
 import org.eclipse.persistence.oxm.mappings.XMLAnyAttributeMapping;
@@ -58,17 +58,49 @@ import org.eclipse.persistence.oxm.mappings.XMLAnyObjectMapping;
 import org.eclipse.persistence.oxm.mappings.XMLFragmentCollectionMapping;
 import org.eclipse.persistence.oxm.mappings.XMLFragmentMapping;
 import org.eclipse.persistence.sessions.Project;
-
+  
 /**
  * INTERNAL:
  * <p><b>Purpose:</b> This class generates an instance of JsonSchema based on an EclipseLink
  * project and given a root class. The descriptor for the root class' mappings are traversed and
  * the associated schema artifacts are created.
  * 
+ * @param <Schema> The specific subtype of JSON Schema required
+ * @param <Property> The specific subtype of the JSON Schema property object
  */
-public class JsonSchemaGenerator {
+public class JsonSchemaGenerator <Schema extends JsonSchema<Property>, Property extends JsonSchemaProperty> {
+    
+    /**
+     * A interface to ask the generator to create specific subclasses of
+     * the standard schema objects, for example JsonSchema with hypermedia
+     * extensions would be an example of a suitable extension.
+     * @param <Schema> The type of the Schema object
+     * @param <Property> The type of the Property object
+     */
+    public interface JsonSchemaFactory<Schema extends JsonSchema<Property>, Property extends JsonSchemaProperty>
+    {
+        public Schema createSchema(Class rootClass);
+        public Property createProperty();
+    }
+
+    /**
+     * A default implements of a factory that produces vanilla v3 JSON Schema
+     * models
+     */
+    public static class DefaultJsonSchemaFactory implements JsonSchemaFactory<JsonSchema<JsonSchemaProperty>, JsonSchemaProperty>
+    {
+        public JsonSchema createSchema(Class rootClass) {
+            return new JsonSchema();
+        }
+
+        public JsonSchemaProperty createProperty() {
+            return new JsonSchemaProperty();
+        }
+    }
+    
+    
     Project project;
-    JsonSchema schema;
+    Schema schema;
     Map contextProperties;
     String attributePrefix;
     Class rootClass;
@@ -76,18 +108,22 @@ public class JsonSchemaGenerator {
     NamespaceResolver resolver;
     String NAMESPACE_SEPARATOR = ".";
     NamespacePrefixMapper prefixMapper = null;
-    Property[] xopIncludeProp = null;
+    JsonSchemaProperty[] xopIncludeProp = null;
     XMLContext xmlContext;
     Property rootProperty = null;
     private JAXBContext jaxbContext;
+    private JsonSchemaFactory<Schema, Property> factory;
 
     private static String DEFINITION_PATH="#/definitions";
     
     private static HashMap<Class, JsonType> javaTypeToJsonType;
     
     
-    public JsonSchemaGenerator(JAXBContext jaxbContext, Map properties) {
+    public JsonSchemaGenerator(
+            JsonSchemaFactory<Schema, Property> factory,
+            JAXBContext jaxbContext, Map properties) {
         //this.project = project;
+        this.factory = factory;
         this.xmlContext = jaxbContext.getXMLContext();
         this.jaxbContext = jaxbContext;
         this.contextProperties = properties;
@@ -113,7 +149,7 @@ public class JsonSchemaGenerator {
     
     public JsonSchema generateSchema(Class rootClass) {
         this.rootClass = rootClass;
-        schema = new JsonSchema();
+        schema = factory.createSchema(rootClass);
         schema.setTitle(rootClass.getName());
         
         if(rootClass.isEnum()) {
@@ -141,7 +177,7 @@ public class JsonSchemaGenerator {
         //Check for root level list or array
         if(rootClass.isArray() || isCollection(rootClass)) {
             schema.setType(JsonType.ARRAY);
-            schema.setItems(new Property());
+            schema.setItems(factory.createProperty());
             Class itemType = Object.class; 
             
             if(rootClass.isArray()) {
@@ -178,7 +214,7 @@ public class JsonSchemaGenerator {
         if(Boolean.TRUE.equals(includeRoot)) {
             XMLField field = descriptor.getDefaultRootElementField();
             if(field != null) {
-                rootProperty = new Property();
+                rootProperty = factory.createProperty();
                 rootProperty.setType(JsonType.OBJECT);
                 rootProperty.setName(getNameForFragment(field.getXPathFragment()));
                 properties.put(rootProperty.getName(), rootProperty);
@@ -188,17 +224,7 @@ public class JsonSchemaGenerator {
         
         boolean allowsAdditionalProperties = hasAnyMappings(descriptor);
         if(descriptor.hasInheritance()) {
-            //handle inheritence
-            //schema.setAnyOf(new Property[descriptor.getInheritancePolicy().getAllChildDescriptors().size()]);
-            List<ClassDescriptor> descriptors = this.getAllDescriptorsForInheritance(descriptor);
-            Property[] props = new Property[descriptors.size()];
-            for(int i = 0; i < props.length; i++) {
-                XMLDescriptor nextDescriptor = (XMLDescriptor)descriptors.get(i);
-                
-                Property ref = new Property();
-                ref.setRef(getReferenceForDescriptor(nextDescriptor, true));
-                props[i] = ref;
-            }
+            JsonSchemaProperty[] props = processDescriptorsIntoProps(descriptor);
             if(rootProperty != null) {
                 rootProperty.setAnyOf(props);
                 rootProperty.setProperties(null);
@@ -459,12 +485,12 @@ public class JsonSchemaGenerator {
                     
                     prop = properties.get(propertyName);
                     if(prop == null) {
-                        prop = new Property();
+                        prop = factory.createProperty();
                         prop.setName(propertyName);
                     }
-                    Property nestedProperty = getNestedPropertyForFragment(frag, prop);
+                    JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
                     nestedProperty.setType(JsonType.ARRAY);
-                    nestedProperty.setItem(new Property());
+                    nestedProperty.setItem(factory.createProperty());
                     nestedProperty.getItem().setType(getJsonTypeForJavaType(type));
                     if(!properties.containsKey(prop.getName())) {
                         properties.put(prop.getName(), prop);                    
@@ -479,25 +505,17 @@ public class JsonSchemaGenerator {
                 //for paths, there may already be an existing property
                 prop = properties.get(propName);
                 if(prop == null) {
-                    prop = new Property();
+                    prop = factory.createProperty();
                     prop.setName(propName);
                 }
-                Property nestedProperty = getNestedPropertyForFragment(frag, prop);
+                JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
                 nestedProperty.setType(JsonType.ARRAY);
-                nestedProperty.setItem(new Property());
+                nestedProperty.setItem(factory.createProperty());
                 XMLDescriptor referenceDescriptor = (XMLDescriptor)mapping.getReferenceDescriptor(); 
                 if(referenceDescriptor != null && referenceDescriptor.hasInheritance()) {
                     //handle inheritence
                     //schema.setAnyOf(new Property[descriptor.getInheritancePolicy().getAllChildDescriptors().size()]);
-                    List<ClassDescriptor> descriptors = getAllDescriptorsForInheritance(referenceDescriptor);
-                    Property[] props = new Property[descriptors.size()];
-                    for(int i = 0; i < props.length; i++) {
-                        XMLDescriptor nextDescriptor = null;
-                        nextDescriptor = (XMLDescriptor)descriptors.get(i);
-                        Property ref = new Property();
-                        ref.setRef(getReferenceForDescriptor(nextDescriptor, true));
-                        props[i] = ref;
-                    }
+                    JsonSchemaProperty[] props = processDescriptorsIntoProps(referenceDescriptor);
                     nestedProperty.getItem().setAnyOf(props);
                 } else {
                     nestedProperty.getItem().setRef(getReferenceForDescriptor(referenceDescriptor, false));
@@ -521,12 +539,12 @@ public class JsonSchemaGenerator {
                 }
                 prop = properties.get(propertyName);
                 if(prop == null) {
-                    prop = new Property();
+                    prop = factory.createProperty();
                     prop.setName(propertyName);
                 }
-                Property nestedProperty = getNestedPropertyForFragment(frag, prop);
+                JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
                 nestedProperty.setType(JsonType.ARRAY);
-                nestedProperty.setItem(new Property());
+                nestedProperty.setItem(factory.createProperty());
                 if(enumeration != null) {
                     nestedProperty.getItem().setEnumeration(enumeration);
                 } 
@@ -557,12 +575,12 @@ public class JsonSchemaGenerator {
                 }
                 prop = properties.get(propertyName);
                 if(prop == null) {
-                    prop = new Property();
+                    prop = factory.createProperty();
                     prop.setName(propertyName);
                 }
-                Property nestedProperty = getNestedPropertyForFragment(frag, prop);
+                JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
                 nestedProperty.setType(JsonType.ARRAY);
-                nestedProperty.setItem(new Property());
+                nestedProperty.setItem(factory.createProperty());
 
                 if(mapping.shouldInlineBinaryData()) {
                     nestedProperty.getItem().setType(JsonType.STRING);
@@ -596,10 +614,10 @@ public class JsonSchemaGenerator {
                 }
                 prop = properties.get(propertyName);
                 if(prop == null) {
-                    prop = new Property();
+                    prop = factory.createProperty();
                     prop.setName(propertyName);
                 }
-                Property nestedProperty = getNestedPropertyForFragment(frag, prop);
+                JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
                 if(enumeration != null) {
                     nestedProperty.setEnumeration(enumeration);
                 } 
@@ -632,10 +650,10 @@ public class JsonSchemaGenerator {
                     
                     prop = properties.get(propName);
                     if(prop == null) {
-                        prop = new Property();
+                        prop = factory.createProperty();
                         prop.setName(propName);
                     }
-                    Property nestedProperty = getNestedPropertyForFragment(frag, prop);
+                    JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
                     //nestedProperty.setType(JsonType.ARRAY);
                     //nestedProperty.setItem(new Property());
                     nestedProperty.setType(getJsonTypeForJavaType(type));
@@ -657,24 +675,15 @@ public class JsonSchemaGenerator {
                     String propName = getNameForFragment(firstFragment);
                     prop = properties.get(propName);
                     if(prop == null) {
-                        prop = new Property();
+                        prop = factory.createProperty();
                         prop.setName(propName);
                     }
                     //prop.setType(JsonType.OBJECT);
                     prop.setName(propName);
-                    Property nestedProperty = getNestedPropertyForFragment(firstFragment, prop);
+                    JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(firstFragment, prop);
                     XMLDescriptor referenceDescriptor = (XMLDescriptor)mapping.getReferenceDescriptor(); 
                     if(referenceDescriptor != null && referenceDescriptor.hasInheritance()) {
-                        //handle inheritence
-                        //schema.setAnyOf(new Property[descriptor.getInheritancePolicy().getAllChildDescriptors().size()]);
-                        List<ClassDescriptor> descriptors = getAllDescriptorsForInheritance(referenceDescriptor);
-                        Property[] props = new Property[descriptors.size()];
-                        for(int i = 0; i < props.length; i++) {
-                            XMLDescriptor nextDesc = (XMLDescriptor)descriptors.get(i);
-                            Property ref = new Property();
-                            ref.setRef(getReferenceForDescriptor(nextDesc, true));
-                            props[i] = ref;
-                        }
+                        JsonSchemaProperty[] props = processDescriptorsIntoProps(referenceDescriptor);
                         nestedProperty.setAnyOf(props);
                     } else {
                         nestedProperty.setRef(getReferenceForDescriptor(referenceDescriptor, false));
@@ -700,10 +709,10 @@ public class JsonSchemaGenerator {
                 }
                 prop = properties.get(propertyName);
                 if(prop == null) {
-                    prop = new Property();
+                    prop = factory.createProperty();
                     prop.setName(propertyName);
                 }
-                Property nestedProperty = getNestedPropertyForFragment(frag, prop);
+                JsonSchemaProperty nestedProperty = getNestedPropertyForFragment(frag, prop);
                 if(binaryMapping.shouldInlineBinaryData() || binaryMapping.isSwaRef()) {
                     nestedProperty.setType(JsonType.STRING);
                 } else {
@@ -717,6 +726,20 @@ public class JsonSchemaGenerator {
         }
         
         return prop;
+    }
+
+    private JsonSchemaProperty[] processDescriptorsIntoProps(XMLDescriptor referenceDescriptor) {
+        //handle inheritence
+        //schema.setAnyOf(new Property[descriptor.getInheritancePolicy().getAllChildDescriptors().size()]);
+        List<ClassDescriptor> descriptors = getAllDescriptorsForInheritance(referenceDescriptor);
+        JsonSchemaProperty[] props = new JsonSchemaProperty[descriptors.size()];
+        for(int i = 0; i < props.length; i++) {
+            XMLDescriptor nextDesc = (XMLDescriptor)descriptors.get(i);
+            JsonSchemaProperty ref = factory.createProperty();
+            ref.setRef(getReferenceForDescriptor(nextDesc, true));
+            props[i] = ref;
+        }
+        return props;
     }
 
     private String getNameForFragment(XPathFragment frag) {
@@ -735,20 +758,20 @@ public class JsonSchemaGenerator {
     }
 
     private void initXopIncludeProp() {
-        this.xopIncludeProp = new Property[2];
-        Property p = new Property();
+        this.xopIncludeProp = new JsonSchemaProperty[2];
+        JsonSchemaProperty p = factory.createProperty();
         p.setType(JsonType.STRING);
         this.xopIncludeProp[0] = p;
         
-        p = new Property();
+        p = factory.createProperty();
         this.xopIncludeProp[1] = p;
         p.setType(JsonType.OBJECT);
-        Property includeProperty = new Property();
+        JsonSchemaProperty includeProperty = factory.createProperty();
         includeProperty.setName("Include");
         includeProperty.setType(JsonType.OBJECT);
         p.getProperties().put(includeProperty.getName(), includeProperty);
         
-        Property hrefProp = new Property();
+        JsonSchemaProperty hrefProp = factory.createProperty();
         String propName = "href";
         if(this.attributePrefix != null) {
             propName = this.attributePrefix + propName;
@@ -777,19 +800,19 @@ public class JsonSchemaGenerator {
             return ref;
         }
         if(!this.schema.getDefinitions().containsKey(className)) {
-            Property definition = new Property();
+            Property definition = factory.createProperty();
             definition.setName(className);
             this.schema.getDefinitions().put(definition.getName(), definition);
             definition.setType(JsonType.OBJECT);
             if(referenceDescriptor.hasInheritance() && referenceDescriptor.getInheritancePolicy().hasClassIndicator()) {
                 XMLField f = (XMLField)referenceDescriptor.getInheritancePolicy().getClassIndicatorField();
-                Property indicatorProp = new Property();
+                JsonSchemaProperty indicatorProp = factory.createProperty();
                 indicatorProp.setName(getNameForFragment(f.getXPathFragment()));
-                indicatorProp.setType(JsonType.STRING);
+                indicatorProp.setType(JsonType.STRING); 
                 definition.getProperties().put(indicatorProp.getName(), indicatorProp);
             }
             JsonType jType = populateProperties(definition.getProperties(), referenceDescriptor);
-            if(jType != null) {
+            if(jType != null) { 
                 if(jType == JsonType.BINARYTYPE) {
                     definition.setAnyOf(getXopIncludeProperties());
                     definition.setProperties(null);
@@ -893,10 +916,10 @@ public class JsonSchemaGenerator {
         if(frag.isAttribute() && this.attributePrefix != null) {
             propertyName = this.attributePrefix + "propertyName";
         }
-        while(frag != null && !frag.nameIsText()) {
-            Property nestedProperty = prop.getProperty(propertyName);
+        while(frag != null && !frag.nameIsText()) { 
+            Property nestedProperty = (Property) prop.getProperty(propertyName); 
             if(nestedProperty == null) {
-                nestedProperty = new Property();
+                nestedProperty = factory.createProperty();
                 nestedProperty.setName(propertyName);
             }
             currentProperties.put(nestedProperty.getName(), nestedProperty);
@@ -913,7 +936,7 @@ public class JsonSchemaGenerator {
         return null;
     }
     
-    private Property[] getXopIncludeProperties() {
+    private JsonSchemaProperty[] getXopIncludeProperties() {
         if(this.xopIncludeProp == null) {
             this.initXopIncludeProp();
         }

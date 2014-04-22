@@ -33,7 +33,7 @@ import org.eclipse.persistence.oxm.annotations.XmlVariableNode;
  * @author mmacivor
  *
  */
-public class JsonSchema {
+public class JsonSchema <Property extends JsonSchemaProperty> {
     
     @XmlElement(name="$schema")
     private String schemaVersion = "http://json-schema.org/draft-04/schema#";
@@ -45,7 +45,7 @@ public class JsonSchema {
     private JsonType type;
     
     @XmlElement(name="anyOf")
-    private Property[] anyOf;
+    private JsonSchemaProperty[] anyOf;
     
     @XmlElement(name="enumeration")
     private List<String> enumeration; 
@@ -55,7 +55,7 @@ public class JsonSchema {
     private Map<String, Property> properties;
 
     @XmlElement(name="items")
-    private Property items;   
+    private JsonSchemaProperty items;   
     
     @XmlElement(name="additionalProperties")
     private Boolean additionalProperties = null;
@@ -101,18 +101,18 @@ public class JsonSchema {
     }
     
     
-    public Property getProperty(String name) {
+    public JsonSchemaProperty getProperty(String name) {
         if(properties == null) {
             return null;
         }
         return properties.get(name);
     }
 
-    public Property getItems() {
+    public JsonSchemaProperty getItems() {
         return items;
     }
 
-    public void setItems(Property items) {
+    public void setItems(JsonSchemaProperty items) {
         this.items = items;
     }
 
@@ -124,12 +124,12 @@ public class JsonSchema {
         this.additionalProperties = additionalProperties;
     }
     
-    public void setAnyOf(Property[] anyOf) {
+    public void setAnyOf(JsonSchemaProperty[] anyOf) {
         this.anyOf = anyOf;
      }
 
 
-     public Property[] getAnyOf() {
+     public JsonSchemaProperty[] getAnyOf() {
          return anyOf;
      }
 
