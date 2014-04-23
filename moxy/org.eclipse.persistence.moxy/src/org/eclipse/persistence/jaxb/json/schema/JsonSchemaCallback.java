@@ -45,7 +45,7 @@ public interface JsonSchemaCallback<Schema extends JsonSchema<Property>, Propert
             return new JsonSchemaProperty();
         }
 
-        public void updateProperty(JsonSchemaProperty property, Mapping next, XMLDescriptor descriptor, Map<String, JsonSchemaProperty> properties) {
+        public void updateProperty(Class clazz, XMLDescriptor descriptor, JsonSchemaProperty property) {
         }
     };
     
@@ -54,7 +54,7 @@ public interface JsonSchemaCallback<Schema extends JsonSchema<Property>, Propert
     public Schema createSchema(Class rootClass);
 
     public Property createProperty();
-     
-    public void updateProperty(Property property, Mapping next, XMLDescriptor descriptor, Map<String, Property> properties);
-    
+
+    public void updateProperty(Class clazz, XMLDescriptor descriptor, JsonSchemaProperty property);
+      
 }

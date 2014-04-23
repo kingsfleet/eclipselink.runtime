@@ -708,7 +708,18 @@ public class JsonSchemaGeneratorImpl <Schema extends JsonSchema<Property>, Prope
         }
         finally {
             if (prop!=null) {
-                callback.updateProperty(prop, next, descriptor, properties); 
+                
+                Class clazz = null;
+                Map<Class, ClassDescriptor> map = project.getDescriptors();
+                found : for (Map.Entry<Class, ClassDescriptor>  entry : map.entrySet())
+                {
+                    if (entry.getValue() == descriptor) {
+                        clazz = entry.getKey();
+                        break found;
+                    }
+                }
+                
+                callback.updateProperty(clazz, descriptor, prop); 
             }
         }
     }
